@@ -93,6 +93,13 @@ st.markdown("""
         border-radius: 10px;
         text-align: center;
     }
+    .progress-container {
+        margin: 0.5rem 0;
+    }
+    .progress-label {
+        font-size: 0.9rem;
+        margin-bottom: 0.2rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -260,7 +267,7 @@ def get_analysis_history(limit=50):
 
 
 # -----------------------------
-# 3️⃣ Fonctions de téléchargement automatique (inchangées)
+# 3️⃣ Fonctions de téléchargement automatique
 # -----------------------------
 
 def download_with_fallback(urls, filename):
@@ -291,7 +298,7 @@ def download_with_fallback(urls, filename):
 
 
 # -----------------------------
-# 4️⃣ Chargement des modèles (inchangé)
+# 4️⃣ Chargement des modèles
 # -----------------------------
 
 @st.cache_resource
@@ -384,6 +391,74 @@ with st.spinner("🔧 Initialisation des modèles en cours..."):
 # 6️⃣ Fonctions utilitaires améliorées
 # -----------------------------
 
+def cleanup_temp_files():
+    """Nettoie les fichiers temporaires potentiellement bloqués"""
+    import tempfile
+    import gc
+
+    # Forcer le garbage collection
+    gc.collect()
+
+    # Nettoyer le répertoire temporaire
+    temp_dir = tempfile.gettempdir()
+    for file in os.listdir(temp_dir):
+        if file.startswith('tmp') and (file.endswith('.jpg') or file.endswith('.png')):
+            try:
+                file_path = os.path.join(temp_dir, file)
+                os.remove(file_path)
+            except PermissionError:
+                # Ignorer les fichiers encore utilisés
+                pass
+
+
+# Nettoyage au démarrage
+if 'cleaned_up' not in st.session_state:
+    cleanup_temp_files()
+    st.session_state.cleaned_up = True
+
+
+def safe_deepface_analysis(image, actions=['age', 'gender', 'emotion', 'race']):
+    """
+    Version sécurisée de DeepFace.analyze qui évite les problèmes de fichiers
+    """
+    try:
+        if isinstance(image, str):
+            # Si c'est un chemin de fichier
+            return DeepFace.analyze(
+                img_path=image,
+                actions=actions,
+                enforce_detection=False,
+                detector_backend='opencv'
+            )
+        else:
+            # Si c'est une image PIL ou numpy array
+            if isinstance(image, Image.Image):
+                img_array = np.array(image.convert('RGB'))
+                img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+            else:
+                img_bgr = image
+
+            return DeepFace.analyze(
+                img_path=img_bgr,
+                actions=actions,
+                enforce_detection=False,
+                detector_backend='opencv'
+            )
+    except Exception as e:
+        st.error(f"Erreur analyse DeepFace: {e}")
+        return None
+
+
+def safe_progress(value, key=None):
+    """Version sécurisée de st.progress qui gère les valeurs hors limites"""
+    try:
+        # S'assurer que la valeur est entre 0 et 1
+        normalized_value = max(0.0, min(1.0, float(value)))
+        st.progress(normalized_value, key=key)
+    except (ValueError, TypeError) as e:
+        st.warning(f"Valeur de progression invalide: {value}")
+
+
 def estimate_real_age(image):
     """Estimation d'âge réel améliorée avec multiples méthodes"""
     try:
@@ -403,12 +478,12 @@ def estimate_real_age(image):
         faces = sorted(faces, key=lambda x: x[2] * x[3], reverse=True)
         x, y, w, h = faces[0]
 
-        # Méthode 1: DeepFace
+        # ✅ CORRECTION: Utiliser l'image en mémoire au lieu de fichier temporaire
+        img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+
+        # Méthode 1: DeepFace avec image en mémoire
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp:
-                cv2.imwrite(temp.name, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-                result = DeepFace.analyze(temp.name, actions=['age'], enforce_detection=False)
-                os.unlink(temp.name)
+            result = safe_deepface_analysis(img_bgr, actions=['age'])
 
             if result and len(result) > 0:
                 real_age = int(result[0]['age'])
@@ -501,7 +576,7 @@ def enhanced_ocr_analysis(image):
         return f"Erreur OCR: {str(e)}", 0, 0
 
 
-def advanced_face_comparison(img1_path, img2_path):
+def advanced_face_comparison(img1, img2):
     """Comparaison de visages avancée avec multiple modèles"""
     try:
         models_to_try = ['VGG-Face', 'Facenet', 'ArcFace', 'OpenFace']
@@ -509,11 +584,15 @@ def advanced_face_comparison(img1_path, img2_path):
 
         for model_name in models_to_try:
             try:
-                result = DeepFace.verify(img1_path, img2_path,
-                                         model_name=model_name,
-                                         distance_metric='cosine',
-                                         enforce_detection=False,
-                                         detector_backend='opencv')
+                # ✅ Utiliser les images directement sans fichiers temporaires
+                result = DeepFace.verify(
+                    img1_path=img1,
+                    img2_path=img2,
+                    model_name=model_name,
+                    distance_metric='cosine',
+                    enforce_detection=False,
+                    detector_backend='opencv'
+                )
                 results.append({
                     'model': model_name,
                     'verified': result['verified'],
@@ -521,6 +600,7 @@ def advanced_face_comparison(img1_path, img2_path):
                     'similarity': (1 - result['distance']) * 100
                 })
             except Exception as e:
+                st.warning(f"Modèle {model_name} échoué: {e}")
                 continue
 
         if not results:
@@ -545,7 +625,7 @@ def advanced_face_comparison(img1_path, img2_path):
 
 
 # -----------------------------
-# 7️⃣ Fonctions pour le mode temps réel (inchangé)
+# 7️⃣ Fonctions pour le mode temps réel
 # -----------------------------
 
 class WebcamProcessor:
@@ -803,44 +883,166 @@ if page == "🏠 Analyse en direct":
                      "📄 OCR & Analyse de document"],
                     horizontal=True)
 
-    # Traitement des tâches (identique au code précédent mais avec sauvegarde DB)
-    if mode == "📁 Upload d'image" and uploaded_file is not None:
+    # Traitement des tâches
+    if (mode == "📁 Upload d'image" and uploaded_file is not None) or (
+            mode == "📷 Temps réel (Webcam)" and image is not None):
         if task == "🧠 Reconnaissance faciale & âge":
-            # [Code de traitement identique mais avec appel à save_face_analysis()]
-            real_age, confidence, bbox = estimate_real_age(image)
-            deepface_result = None
+            st.subheader("🧠 Résultats de l'analyse faciale")
 
-            try:
-                deepface_result = DeepFace.analyze(image_path,
-                                                   actions=['age', 'gender', 'emotion', 'race'],
-                                                   enforce_detection=False)
-            except:
-                pass
+            with st.spinner("🔍 Analyse du visage en cours..."):
+                real_age, confidence, bbox = estimate_real_age(image)
+                deepface_result = safe_deepface_analysis(image)
 
-            if real_age is not None:
+            if real_age is not None and deepface_result and len(deepface_result) > 0:
                 # Sauvegarde dans la base de données
-                if deepface_result and len(deepface_result) > 0:
-                    df_data = deepface_result[0]
-                    save_face_analysis(
-                        real_age,
-                        df_data.get('dominant_gender', 'Inconnu'),
-                        df_data.get('dominant_emotion', 'Neutre'),
-                        df_data.get('dominant_race', 'Inconnue'),
-                        confidence,
-                        image_path
-                    )
+                df_data = deepface_result[0]
+                save_face_analysis(
+                    real_age,
+                    df_data.get('dominant_gender', 'Inconnu'),
+                    df_data.get('dominant_emotion', 'Neutre'),
+                    df_data.get('dominant_race', 'Inconnue'),
+                    confidence if confidence else 0.5,
+                    image_path
+                )
 
-                # Affichage des résultats...
-                st.markdown(f'<div class="age-display">🎂 Âge estimé: {real_age} ans</div>', unsafe_allow_html=True)
-                # ... reste du code d'affichage
+                # Affichage des résultats
+                col_res1, col_res2 = st.columns(2)
+
+                with col_res1:
+                    st.markdown(f'<div class="age-display">🎂 Âge estimé: {real_age} ans</div>', unsafe_allow_html=True)
+
+                    # Affichage de l'image avec bounding box
+                    if bbox:
+                        img_with_bbox = np.array(image.convert('RGB'))
+                        x, y, w, h = bbox
+                        cv2.rectangle(img_with_bbox, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                        st.image(img_with_bbox, caption="Visage détecté", use_container_width=True)
+                    else:
+                        st.image(image, caption="Image analysée", use_container_width=True)
+
+                with col_res2:
+                    st.markdown("### 📊 Détails de l'analyse")
+
+                    # Informations démographiques
+                    st.markdown(f"**👤 Genre:** {df_data.get('dominant_gender', 'Inconnu')}")
+                    st.markdown(f"**😊 Émotion dominante:** {df_data.get('dominant_emotion', 'Inconnue')}")
+                    st.markdown(f"**🌍 Origine estimée:** {df_data.get('dominant_race', 'Inconnue')}")
+                    st.markdown(
+                        f"**📊 Niveau de confiance:** {confidence:.2%}" if confidence else "**📊 Niveau de confiance:** Non disponible")
+
+                    # Détails des émotions
+                    if 'emotion' in df_data:
+                        st.markdown("#### 📈 Distribution des émotions:")
+                        emotions = df_data['emotion']
+                        for emotion, score in emotions.items():
+                            progress = int(score * 100)
+                            st.markdown(f"**{emotion}:** {progress}%")
+                            # ✅ CORRECTION: Utilisation de safe_progress
+                            safe_progress(score, key=f"emotion_{emotion}")
+
+                st.success("✅ Analyse terminée avec succès!")
+
+            else:
+                st.error("❌ Impossible d'analyser le visage. Veuillez essayer avec une autre image.")
 
         elif task == "🔍 Matching de visages":
-            # [Code de comparaison avec sauvegarde]
-            pass
+            st.subheader("🔍 Comparaison de visages")
+
+            col_comp1, col_comp2 = st.columns(2)
+
+            with col_comp1:
+                st.markdown("**Image de référence:**")
+                ref_file = st.file_uploader("Choisissez l'image de référence",
+                                            type=["jpg", "jpeg", "png", "bmp"],
+                                            key="ref")
+                if ref_file:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_ref:
+                        temp_ref.write(ref_file.read())
+                        ref_path = temp_ref.name
+                    st.image(ref_path, caption="Image de référence", use_container_width=True)
+
+            with col_comp2:
+                st.markdown("**Image à comparer:**")
+                if image:
+                    st.image(image, caption="Image à comparer", use_container_width=True)
+
+            if 'ref_path' in locals() and image:
+                if st.button("🔍 Lancer la comparaison"):
+                    with st.spinner("🔍 Comparaison des visages en cours..."):
+                        # Convertir l'image PIL en format compatible
+                        img_bgr = cv2.cvtColor(np.array(image.convert('RGB')), cv2.COLOR_RGB2BGR)
+
+                        verified, distance, similarity, model_info = advanced_face_comparison(ref_path, img_bgr)
+
+                        # Sauvegarde
+                        save_face_comparison(similarity, verified, model_info, ref_path, image_path)
+
+                        # Affichage résultats
+                        col_res1, col_res2 = st.columns(2)
+
+                        with col_res1:
+                            if verified:
+                                st.markdown('<div class="success-box">✅ **CORRESPONDANCE TROUVÉE**</div>',
+                                            unsafe_allow_html=True)
+                            else:
+                                st.markdown('<div class="error-box">❌ **AUCUNE CORRESPONDANCE**</div>',
+                                            unsafe_allow_html=True)
+
+                            st.markdown(f"**📈 Score de similarité:** {similarity:.2f}%")
+                            st.markdown(f"**📏 Distance:** {distance:.4f}")
+                            st.markdown(f"**🤖 Modèle utilisé:** {model_info}")
+
+                        with col_res2:
+                            # Barre de similarité
+                            st.markdown(f"**Niveau de confiance:**")
+                            # ✅ CORRECTION: Utilisation de safe_progress
+                            similarity_progress = similarity / 100
+                            safe_progress(similarity_progress, key="similarity")
+
+                            if similarity >= 80:
+                                st.success("🔒 Forte probabilité de correspondance")
+                            elif similarity >= 60:
+                                st.warning("⚠️ Correspondance modérée")
+                            else:
+                                st.error("🔓 Faible probabilité de correspondance")
 
         elif task == "📄 OCR & Analyse de document":
-            # [Code OCR avec sauvegarde]
-            pass
+            st.subheader("📄 Analyse OCR du document")
+
+            if image:
+                with st.spinner("🔍 Analyse du texte en cours..."):
+                    text_content, avg_confidence, text_count = enhanced_ocr_analysis(image)
+
+                # Déterminer le type de document
+                doc_type = "Document"
+                if text_count > 200:
+                    doc_type = "Document long"
+                elif "facture" in text_content.lower() or "invoice" in text_content.lower():
+                    doc_type = "Facture"
+                elif "carte" in text_content.lower() or "id" in text_content.lower():
+                    doc_type = "Carte d'identité"
+                elif "passeport" in text_content.lower():
+                    doc_type = "Passeport"
+
+                # Sauvegarde
+                save_ocr_analysis(text_content, avg_confidence, text_count, doc_type, image_path)
+
+                # Affichage résultats
+                col_ocr1, col_ocr2 = st.columns([1, 1])
+
+                with col_ocr1:
+                    st.image(image, caption="Document analysé", use_container_width=True)
+
+                with col_ocr2:
+                    st.markdown("### 📊 Résultats OCR")
+                    st.markdown(f"**📄 Type de document:** {doc_type}")
+                    st.markdown(f"**🔤 Nombre de mots détectés:** {text_count}")
+                    st.markdown(f"**📊 Confiance moyenne:** {avg_confidence:.2%}")
+
+                    st.markdown("#### 📝 Texte extrait:")
+                    st.text_area("Texte", text_content, height=200)
+
+                st.success(f"✅ Analyse OCR terminée! {text_count} mots détectés.")
 
 # -----------------------------
 # 📊 Page: Statistiques
@@ -878,12 +1080,24 @@ elif page == "📜 Historique":
 # 🔚 Nettoyage et footer
 # -----------------------------
 
-# Nettoyage
+# Nettoyage amélioré
 try:
+    # Nettoyer les fichiers temporaires à la fin
+    cleanup_temp_files()
+
     if 'image_path' in locals() and image_path and os.path.exists(image_path):
-        os.unlink(image_path)
-    if 'ref_path' in locals() and os.path.exists(ref_path):
-        os.unlink(ref_path)
+        time.sleep(1)  # Attendre que les processus libèrent les fichiers
+        try:
+            os.unlink(image_path)
+        except PermissionError:
+            pass  # Ignorer si le fichier est encore utilisé
+
+    if 'ref_path' in locals() and 'ref_path' in locals() and os.path.exists(ref_path):
+        time.sleep(1)
+        try:
+            os.unlink(ref_path)
+        except PermissionError:
+            pass
 except:
     pass
 
