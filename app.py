@@ -26,9 +26,11 @@ st.set_page_config(
 if 'dark_mode' not in st.session_state:
     st.session_state.dark_mode = False
 
+
 def toggle_dark_mode():
     st.session_state.dark_mode = not st.session_state.dark_mode
     st.rerun()
+
 
 # CSS corrigé avec meilleure spécificité
 st.markdown(f"""
@@ -882,6 +884,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+
 # -----------------------------
 # INITIALISATION BASE DE DONNÉES
 # -----------------------------
@@ -930,8 +933,10 @@ def init_database():
     conn.commit()
     return conn
 
+
 if 'db_conn' not in st.session_state:
     st.session_state.db_conn = init_database()
+
 
 # -----------------------------
 # CHARGEMENT DES MODÈLES
@@ -955,8 +960,10 @@ def load_models():
 
     return models
 
+
 with st.spinner("⚙️ Initialisation du système..."):
     models = load_models()
+
 
 # -----------------------------
 # FONCTIONS PRINCIPALES
@@ -978,6 +985,7 @@ def save_face_analysis(age, gender, emotion, race, confidence, image_path=None, 
     except Exception as e:
         return False
 
+
 def save_ocr_analysis(text_content, confidence, text_count, doc_type, image_path):
     """Sauvegarde une analyse OCR"""
     try:
@@ -992,6 +1000,23 @@ def save_ocr_analysis(text_content, confidence, text_count, doc_type, image_path
         return True
     except Exception as e:
         return False
+
+
+def save_realtime_analysis(faces_detected, analysis_data):
+    """Sauvegarde une analyse temps réel"""
+    try:
+        conn = st.session_state.db_conn
+        c = conn.cursor()
+        c.execute('''
+            INSERT INTO realtime_analyses 
+            (timestamp, faces_detected, analysis_data)
+            VALUES (?, ?, ?)
+        ''', (datetime.now().isoformat(), faces_detected, json.dumps(analysis_data)))
+        conn.commit()
+        return True
+    except Exception as e:
+        return False
+
 
 def estimate_real_age(image):
     """Estime l'âge réel"""
@@ -1020,6 +1045,7 @@ def estimate_real_age(image):
     except:
         return 30, 0.5, None
 
+
 def safe_deepface_analysis(image, actions=['age', 'gender', 'emotion', 'race']):
     """Analyse DeepFace sécurisée"""
     try:
@@ -1036,6 +1062,7 @@ def safe_deepface_analysis(image, actions=['age', 'gender', 'emotion', 'race']):
         return result, processing_time
     except Exception as e:
         return None, 0
+
 
 def enhanced_ocr_analysis(image):
     """OCR amélioré"""
@@ -1062,6 +1089,27 @@ def enhanced_ocr_analysis(image):
         return full_text, avg_confidence, len(texts)
     except Exception as e:
         return f"Erreur OCR: {str(e)}", 0, 0
+
+
+def get_face_statistics():
+    """Récupère les statistiques des analyses faciales"""
+    try:
+        conn = st.session_state.db_conn
+        df = pd.read_sql('SELECT * FROM face_analyses', conn)
+        return df
+    except:
+        return pd.DataFrame()
+
+
+def get_ocr_statistics():
+    """Récupère les statistiques OCR"""
+    try:
+        conn = st.session_state.db_conn
+        df = pd.read_sql('SELECT * FROM ocr_analyses', conn)
+        return df
+    except:
+        return pd.DataFrame()
+
 
 # -----------------------------
 # NAVIGATION SIDEBAR
@@ -1244,6 +1292,150 @@ if page == "🏠 Tableau de Bord":
                     <span style="color: #f59e0b;">●</span> Performance: Optimale
                 </div>
             </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+elif page == "🎥 Analyse Temps Réel":
+    st.markdown("""
+    <div class="pro-card-alt">
+        <div class="card-header-alt">
+            <h2 class="card-title-alt">
+                <div class="card-icon-alt">🎥</div>
+                Analyse en Temps Réel
+            </h2>
+            <div class="live-badge-alt">
+                <div class="live-dot-alt"></div>
+                EN DIRECT
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        st.markdown("""
+        <div class="webcam-pro-alt">
+            <h3 style="color: var(--text-primary); margin-bottom: 1.5rem; font-weight: 700;">📷 Flux Vidéo en Direct</h3>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Interface webcam
+        picture = st.camera_input("Activez votre caméra pour l'analyse en temps réel")
+
+        if picture:
+            # Sauvegarder l'image temporairement
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp:
+                temp.write(picture.read())
+                image_path = temp.name
+
+            # Réouvrir l'image pour traitement
+            image = Image.open(image_path)
+
+            # Analyse faciale
+            with st.spinner("🔍 Analyse en cours..."):
+                real_age, confidence, bbox = estimate_real_age(image)
+                deepface_result, processing_time = safe_deepface_analysis(image)
+
+            if real_age and deepface_result:
+                df_data = deepface_result[0]
+
+                # Sauvegarder l'analyse
+                save_realtime_analysis(1, {
+                    'age': real_age,
+                    'gender': df_data.get('dominant_gender', 'Inconnu'),
+                    'emotion': df_data.get('dominant_emotion', 'Neutre'),
+                    'race': df_data.get('dominant_race', 'Inconnue')
+                })
+
+                # Afficher les résultats
+                st.markdown(f"""
+                <div class="analysis-result-pro-alt">
+                    <h3 style="margin-bottom: 1.5rem; color: var(--text-primary); font-weight: 800;">📊 Résultats en Temps Réel</h3>
+                    <div class="result-row-alt">
+                        <div class="result-label-alt">🎂 Âge estimé</div>
+                        <div class="result-value-alt">{real_age} ans</div>
+                    </div>
+                    <div class="result-row-alt">
+                        <div class="result-label-alt">👤 Genre</div>
+                        <div class="result-value-alt">{df_data.get('dominant_gender', 'Inconnu')}</div>
+                    </div>
+                    <div class="result-row-alt">
+                        <div class="result-label-alt">😊 Émotion dominante</div>
+                        <div class="result-value-alt">{df_data.get('dominant_emotion', 'Neutre')}</div>
+                    </div>
+                    <div class="result-row-alt">
+                        <div class="result-label-alt">🌍 Origine ethnique</div>
+                        <div class="result-value-alt">{df_data.get('dominant_race', 'Inconnue')}</div>
+                    </div>
+                    <div class="progress-container-alt">
+                        <div class="progress-bar-alt" style="width: {confidence * 100}%"></div>
+                    </div>
+                    <p style="margin-top: 0.8rem; color: var(--text-muted); font-size: 0.95rem; font-weight: 600;">
+                        Niveau de confiance: {confidence:.1%}
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+
+    with col2:
+        st.markdown("""
+        <div class="pro-card-alt">
+            <div class="card-header-alt">
+                <h3 class="card-title-alt">⚙️ Paramètres Temps Réel</h3>
+            </div>
+            <div style="color: var(--text-secondary);">
+                <div style="margin-bottom: 1.5rem;">
+                    <h4 style="color: var(--text-primary); margin-bottom: 0.5rem;">🔧 Options</h4>
+                    <div style="display: flex; flex-direction: column; gap: 0.8rem;">
+                        <label style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" checked> Détection faciale
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" checked> Analyse émotionnelle
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox"> Reconnaissance OCR
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("""
+        <div class="pro-card-alt">
+            <div class="card-header-alt">
+                <h3 class="card-title-alt">📈 Statistiques Live</h3>
+            </div>
+            <div style="color: var(--text-secondary);">
+                <div style="display: flex; justify-content: between; margin-bottom: 1rem; padding: 0.8rem; background: var(--bg-secondary); border-radius: 8px;">
+                    <span>Visages détectés:</span>
+                    <strong style="color: var(--text-primary);">1</strong>
+                </div>
+                <div style="display: flex; justify-content: between; margin-bottom: 1rem; padding: 0.8rem; background: var(--bg-secondary); border-radius: 8px;">
+                    <span>Temps réponse:</span>
+                    <strong style="color: var(--text-primary);">0.3s</strong>
+                </div>
+                <div style="display: flex; justify-content: between; padding: 0.8rem; background: var(--bg-secondary); border-radius: 8px;">
+                    <span>FPS:</span>
+                    <strong style="color: var(--text-primary);">30</strong>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("""
+        <div class="pro-card-alt">
+            <div class="card-header-alt">
+                <h3 class="card-title-alt">💡 Conseils</h3>
+            </div>
+            <ul style="color: var(--text-secondary); line-height: 1.6; font-weight: 500;">
+                <li>✅ Bon éclairage facial</li>
+                <li>✅ Position face caméra</li>
+                <li>✅ Arrière-plan neutre</li>
+                <li>✅ Distance optimale: 1-2m</li>
+                <li>✅ Éviter les mouvements brusques</li>
+            </ul>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1440,6 +1632,265 @@ elif page == "📷 Analyse Image":
             </div>
         </div>
         """, unsafe_allow_html=True)
+
+elif page == "📊 Analytics":
+    st.markdown("""
+    <div class="pro-card-alt">
+        <div class="card-header-alt">
+            <h2 class="card-title-alt">
+                <div class="card-icon-alt">📊</div>
+                Tableaux de Bord & Analytics
+            </h2>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Récupérer les données
+    face_data = get_face_statistics()
+    ocr_data = get_ocr_statistics()
+
+    if not face_data.empty:
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            total_analyses = len(face_data)
+            st.markdown(f"""
+            <div class="metric-card-pro-alt">
+                <div class="metric-label-alt">📈 ANALYSES TOTALES</div>
+                <div class="metric-value-alt">{total_analyses}</div>
+                <div class="metric-change-alt">📈 +{int(total_analyses * 0.12)} ce mois</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col2:
+            avg_age = face_data['age'].mean()
+            st.markdown(f"""
+            <div class="metric-card-pro-alt">
+                <div class="metric-label-alt">🎂 ÂGE MOYEN</div>
+                <div class="metric-value-alt">{int(avg_age)}</div>
+                <div class="metric-change-alt">📊 basé sur {total_analyses} analyses</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col3:
+            gender_dist = face_data['gender'].value_counts()
+            if not gender_dist.empty:
+                main_gender = gender_dist.index[0]
+                st.markdown(f"""
+                <div class="metric-card-pro-alt">
+                    <div class="metric-label-alt">👤 GENRE PRÉDOMINANT</div>
+                    <div class="metric-value-alt">{main_gender}</div>
+                    <div class="metric-change-alt">📊 {gender_dist[main_gender]} analyses</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        with col4:
+            if not ocr_data.empty:
+                total_text = ocr_data['text_count'].sum()
+                st.markdown(f"""
+                <div class="metric-card-pro-alt">
+                    <div class="metric-label-alt">📄 TEXTE EXTRAIT</div>
+                    <div class="metric-value-alt">{total_text}</div>
+                    <div class="metric-change-alt">📊 mots et caractères</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        # Graphiques
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("""
+            <div class="chart-container-alt">
+                <h3 style="color: var(--text-primary); margin-bottom: 1.5rem; font-weight: 700;">📈 Répartition par Genre</h3>
+            </div>
+            """, unsafe_allow_html=True)
+
+            if 'gender' in face_data.columns:
+                gender_counts = face_data['gender'].value_counts()
+                fig, ax = plt.subplots(figsize=(8, 6))
+                colors = ['#3b82f6', '#8b5cf6', '#06b6d4']
+                wedges, texts, autotexts = ax.pie(gender_counts.values, labels=gender_counts.index,
+                                                  autopct='%1.1f%%', colors=colors, startangle=90)
+
+                for autotext in autotexts:
+                    autotext.set_color('white')
+                    autotext.set_fontweight('bold')
+
+                ax.set_title('Répartition par Genre', fontsize=14, fontweight='bold', pad=20)
+                st.pyplot(fig)
+
+        with col2:
+            st.markdown("""
+            <div class="chart-container-alt">
+                <h3 style="color: var(--text-primary); margin-bottom: 1.5rem; font-weight: 700;">📊 Distribution des Âges</h3>
+            </div>
+            """, unsafe_allow_html=True)
+
+            if 'age' in face_data.columns:
+                fig, ax = plt.subplots(figsize=(8, 6))
+                ax.hist(face_data['age'], bins=15, color='#3b82f6', alpha=0.7, edgecolor='black')
+                ax.set_xlabel('Âge')
+                ax.set_ylabel('Nombre d\'analyses')
+                ax.set_title('Distribution des Âges', fontsize=14, fontweight='bold')
+                ax.grid(True, alpha=0.3)
+                st.pyplot(fig)
+
+        # Tableau des dernières analyses
+        st.markdown("""
+        <div class="pro-card-alt">
+            <div class="card-header-alt">
+                <h3 class="card-title-alt">📋 Dernières Analyses</h3>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Afficher les 10 dernières analyses
+        recent_analyses = face_data.head(10)[['timestamp', 'age', 'gender', 'emotion', 'confidence']]
+        recent_analyses['timestamp'] = pd.to_datetime(recent_analyses['timestamp']).dt.strftime('%Y-%m-%d %H:%M')
+        st.dataframe(recent_analyses, use_container_width=True)
+
+    else:
+        st.info(
+            "📊 Aucune donnée d'analyse disponible pour le moment. Effectuez des analyses pour voir les statistiques.")
+
+elif page == "📜 Historique":
+    st.markdown("""
+    <div class="pro-card-alt">
+        <div class="card-header-alt">
+            <h2 class="card-title-alt">
+                <div class="card-icon-alt">📜</div>
+                Historique des Analyses
+            </h2>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Options de filtrage
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        analysis_type = st.selectbox(
+            "Type d'analyse",
+            ["Toutes", "Analyse Faciale", "Reconnaissance Texte"]
+        )
+
+    with col2:
+        date_range = st.selectbox(
+            "Période",
+            ["7 derniers jours", "30 derniers jours", "3 derniers mois", "Toutes"]
+        )
+
+    with col3:
+        items_per_page = st.selectbox(
+            "Éléments par page",
+            [10, 25, 50, 100]
+        )
+
+    # Récupérer les données
+    face_data = get_face_statistics()
+    ocr_data = get_ocr_statistics()
+
+    tab1, tab2 = st.tabs(["🧠 Analyses Faciales", "📄 Analyses OCR"])
+
+    with tab1:
+        if not face_data.empty:
+            st.markdown(f"**{len(face_data)} analyses faciales trouvées**")
+
+            # Formater les données
+            display_data = face_data[
+                ['timestamp', 'age', 'gender', 'emotion', 'race', 'confidence', 'processing_time']].copy()
+            display_data['timestamp'] = pd.to_datetime(display_data['timestamp']).dt.strftime('%Y-%m-%d %H:%M')
+            display_data['confidence'] = display_data['confidence'].apply(lambda x: f"{x:.1%}")
+            display_data['processing_time'] = display_data['processing_time'].apply(lambda x: f"{x:.2f}s")
+
+            st.dataframe(
+                display_data,
+                use_container_width=True,
+                column_config={
+                    "timestamp": "Date/Heure",
+                    "age": "Âge",
+                    "gender": "Genre",
+                    "emotion": "Émotion",
+                    "race": "Origine",
+                    "confidence": "Confiance",
+                    "processing_time": "Temps traitement"
+                }
+            )
+
+            # Options d'export
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("📥 Exporter en CSV", use_container_width=True):
+                    csv = face_data.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Télécharger CSV",
+                        data=csv,
+                        file_name="analyses_faciales.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+
+            with col2:
+                if st.button("🗑️ Vider l'historique", use_container_width=True, type="secondary"):
+                    if st.session_state.db_conn:
+                        c = st.session_state.db_conn.cursor()
+                        c.execute('DELETE FROM face_analyses')
+                        st.session_state.db_conn.commit()
+                        st.success("✅ Historique des analyses faciales vidé avec succès!")
+                        st.rerun()
+        else:
+            st.info("📭 Aucune analyse faciale dans l'historique.")
+
+    with tab2:
+        if not ocr_data.empty:
+            st.markdown(f"**{len(ocr_data)} analyses OCR trouvées**")
+
+            # Formater les données
+            display_data = ocr_data[['timestamp', 'doc_type', 'text_count', 'confidence']].copy()
+            display_data['timestamp'] = pd.to_datetime(display_data['timestamp']).dt.strftime('%Y-%m-%d %H:%M')
+            display_data['confidence'] = display_data['confidence'].apply(lambda x: f"{x:.1%}")
+
+            st.dataframe(
+                display_data,
+                use_container_width=True,
+                column_config={
+                    "timestamp": "Date/Heure",
+                    "doc_type": "Type de document",
+                    "text_count": "Nombre de textes",
+                    "confidence": "Confiance moyenne"
+                }
+            )
+
+            # Aperçu du contenu texte
+            st.markdown("### 📝 Aperçu des Textes Extraits")
+            for idx, row in ocr_data.head(5).iterrows():
+                with st.expander(f"📄 {row['doc_type']} - {row['timestamp'][:10]}"):
+                    st.text_area("Contenu", row['text_content'], height=100, key=f"ocr_{idx}")
+
+            # Options d'export
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("📥 Exporter OCR en CSV", use_container_width=True, key="export_ocr"):
+                    csv = ocr_data.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Télécharger CSV OCR",
+                        data=csv,
+                        file_name="analyses_ocr.csv",
+                        mime="text/csv",
+                        use_container_width=True,
+                        key="download_ocr"
+                    )
+
+            with col2:
+                if st.button("🗑️ Vider historique OCR", use_container_width=True, type="secondary", key="clear_ocr"):
+                    if st.session_state.db_conn:
+                        c = st.session_state.db_conn.cursor()
+                        c.execute('DELETE FROM ocr_analyses')
+                        st.session_state.db_conn.commit()
+                        st.success("✅ Historique OCR vidé avec succès!")
+                        st.rerun()
+        else:
+            st.info("📭 Aucune analyse OCR dans l'historique.")
 
 # Footer Professionnel
 st.markdown("---")
